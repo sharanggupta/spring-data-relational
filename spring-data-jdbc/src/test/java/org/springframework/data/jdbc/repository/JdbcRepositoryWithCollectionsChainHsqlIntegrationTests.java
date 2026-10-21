@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.*;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -14,6 +15,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Import;
 import org.springframework.data.annotation.Id;
+import org.springframework.data.annotation.ReadOnlyProperty;
 import org.springframework.data.jdbc.repository.support.JdbcRepositoryFactory;
 import org.springframework.data.jdbc.testing.DatabaseType;
 import org.springframework.data.jdbc.testing.EnabledOnDatabase;
@@ -49,7 +51,7 @@ class JdbcRepositoryWithCollectionsChainHsqlIntegrationTests {
 		return entity;
 	}
 
-	@Test // DATAJDBC-551
+	@Test // DATAJDBC-551, GH-2123
 	void deleteByName() {
 
 		ChildElement element1 = createChildElement("one");
@@ -65,8 +67,8 @@ class JdbcRepositoryWithCollectionsChainHsqlIntegrationTests {
 
 		assertThat(repository.findById(entity.id)).isEmpty();
 
-		Long count = template.queryForObject("select count(1) from grand_child_element", new HashMap<>(), Long.class);
-		assertThat(count).isEqualTo(0);
+		assertThat(countRows("child_element")).isEqualTo(0);
+		assertThat(countRows("grand_child_element")).isEqualTo(0);
 	}
 
 	@Test
@@ -87,11 +89,11 @@ class JdbcRepositoryWithCollectionsChainHsqlIntegrationTests {
 
 		assertThat(listRootRepository.findById(root.id)).isEmpty();
 
-		Long count = template.queryForObject("select count(1) from list_grand_child", new HashMap<>(), Long.class);
-		assertThat(count).isEqualTo(0);
+		assertThat(countRows("list_child")).isEqualTo(0);
+		assertThat(countRows("list_grand_child")).isEqualTo(0);
 	}
 
-	@Test
+	@Test // GH-2417
 	void deleteByNameKeepsTheGrandChildrenOfOtherAggregates() {
 
 		DummyEntity other = createDummyEntity("Other Name");
@@ -111,6 +113,23 @@ class JdbcRepositoryWithCollectionsChainHsqlIntegrationTests {
 
 		DummyEntity reloaded = repository.findById(other.id).orElseThrow();
 		assertThat(reloaded.content).hasSize(2).allSatisfy(child -> assertThat(child.content).hasSize(2));
+	}
+
+	@Test
+	void deleteByNameKeepsReadOnlyChildren() {
+
+		DummyEntity entity = repository.save(createDummyEntity());
+		template.update("insert into read_only_element (dummy_entity, name) values (:id, 'read only')",
+				Map.of("id", entity.id));
+
+		assertThat(repository.deleteByName("Entity Name")).isEqualTo(1);
+
+		assertThat(repository.findById(entity.id)).isEmpty();
+		assertThat(countRows("read_only_element")).isEqualTo(1);
+	}
+
+	private long countRows(String table) {
+		return template.queryForObject("select count(1) from " + table, new HashMap<>(), Long.class);
 	}
 
 	private ChildElement createChildElement(String name) {
@@ -163,6 +182,7 @@ class JdbcRepositoryWithCollectionsChainHsqlIntegrationTests {
 
 		String name;
 		Set<ChildElement> content = new HashSet<>();
+		@ReadOnlyProperty Set<ReadOnlyElement> readOnly = new HashSet<>();
 		@Id private Long id;
 
 	}
@@ -177,6 +197,12 @@ class JdbcRepositoryWithCollectionsChainHsqlIntegrationTests {
 	static class GrandChildElement {
 
 		String content;
+		@Id private Long id;
+	}
+
+	static class ReadOnlyElement {
+
+		String name;
 		@Id private Long id;
 	}
 

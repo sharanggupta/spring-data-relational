@@ -107,10 +107,10 @@ class JdbcDeleteQueryCreator extends RelationalQueryCreator<List<ParametrizedQue
 
 		// create select criteria query for subselect
 		SelectWhere selectBuilder = StatementBuilder.select(idColumns).from(table);
-		Select select = condition == null ? selectBuilder.build() : selectBuilder.where(condition).build();
+		Select rootIdSelect = condition == null ? selectBuilder.build() : selectBuilder.where(condition).build();
 
 		// create delete relation queries
-		List<Delete> deleteChain = createNestedDeletes(entity, select);
+		List<Delete> deleteChain = createNestedDeletes(entity, rootIdSelect);
 
 		// crate delete query
 		DeleteWhere deleteBuilder = StatementBuilder.delete(table);
@@ -131,7 +131,8 @@ class JdbcDeleteQueryCreator extends RelationalQueryCreator<List<ParametrizedQue
 
 	/**
 	 * Creates the statements deleting the entities nested in the given entity, deepest paths first, restricted to the
-	 * aggregate roots selected by {@literal rootIdSelect}.
+	 * aggregate roots selected by {@literal rootIdSelect}. Like deletes of whole aggregates, this leaves read-only
+	 * entities alone.
 	 */
 	private List<Delete> createNestedDeletes(RelationalPersistentEntity<?> entity, Select rootIdSelect) {
 
@@ -140,7 +141,7 @@ class JdbcDeleteQueryCreator extends RelationalQueryCreator<List<ParametrizedQue
 				.findPersistentPropertyPaths(entity.getType(), Predicates.isTrue())) {
 
 			AggregatePath aggregatePath = context.getAggregatePath(path);
-			if (!aggregatePath.isEmbedded() && aggregatePath.isEntity()) {
+			if (aggregatePath.isWritable() && !aggregatePath.isEmbedded() && aggregatePath.isEntity()) {
 				paths.add(aggregatePath);
 			}
 		}
@@ -153,42 +154,40 @@ class JdbcDeleteQueryCreator extends RelationalQueryCreator<List<ParametrizedQue
 		return deletes;
 	}
 
-	private Delete createNestedDelete(AggregatePath path, Select rootIdSelect) {
+	private static Delete createNestedDelete(AggregatePath path, Select rootIdSelect) {
 
 		// MariaDB prior to 11.6 does not support aliases for delete statements
-		Table table = new SqlContext().getUnaliasedTable(path);
+		Table table = Table.create(path.getTableInfo().qualifiedTableName());
 		Expression backReference = Expressions.of(path.getTableInfo().backReferenceColumnInfos().toColumnList(table));
 
-		return StatementBuilder.delete(table).where(referencesRoots(path, backReference, rootIdSelect)).build();
+		return StatementBuilder.delete(table).where(restrictToRoots(path, backReference, rootIdSelect)).build();
 	}
 
 	/**
 	 * Returns the condition restricting the given back reference of {@literal path} to the aggregate roots selected by
-	 * {@literal rootIdSelect}. A back reference holds the id of the closest ancestor with an id, so the condition
-	 * navigates to the root through a sub-select on the table of every such ancestor, like
-	 * {@link org.springframework.data.jdbc.core.convert.SqlGenerator} does for deletes by path.
+	 * {@literal rootIdSelect}. A back reference holds the id of the closest ancestor with an id. Unless that ancestor
+	 * is the root, the condition navigates to the root through a sub-select on the ancestor's table, filtered by the
+	 * ancestor's own back reference, in the same way {@link org.springframework.data.jdbc.core.convert.SqlGenerator}
+	 * builds its deletes by path.
 	 */
-	private static Condition referencesRoots(AggregatePath path, Expression backReference, Select rootIdSelect) {
+	private static Condition restrictToRoots(AggregatePath path, Expression backReference, Select rootIdSelect) {
 
-		AggregatePath parentPath = path.getParentPath();
+		AggregatePath owner = path.getIdDefiningParentPath();
 
-		if (parentPath.isRoot()) {
+		if (owner.isRoot()) {
 			return Conditions.in(backReference, rootIdSelect);
 		}
-		if (!parentPath.hasIdProperty()) {
-			return referencesRoots(parentPath, backReference, rootIdSelect);
-		}
 
-		AggregatePath.TableInfo parentTableInfo = parentPath.getTableInfo();
-		Table parentTable = Table.create(parentTableInfo.qualifiedTableName());
-		Expression parentBackReference = Expressions
-				.of(parentTableInfo.backReferenceColumnInfos().toColumnList(parentTable));
+		AggregatePath.TableInfo ownerTableInfo = owner.getTableInfo();
+		Table ownerTable = Table.create(ownerTableInfo.qualifiedTableName());
+		Expression ownerBackReference = Expressions
+				.of(ownerTableInfo.backReferenceColumnInfos().toColumnList(ownerTable));
 
-		Select parentIdSelect = StatementBuilder.select(parentTableInfo.idColumnInfos().toColumnList(parentTable)) //
-				.from(parentTable) //
-				.where(referencesRoots(parentPath, parentBackReference, rootIdSelect)) //
+		Select ownerIdSelect = StatementBuilder.select(ownerTableInfo.idColumnInfos().toColumnList(ownerTable)) //
+				.from(ownerTable) //
+				.where(restrictToRoots(owner, ownerBackReference, rootIdSelect)) //
 				.build();
 
-		return Conditions.in(backReference, parentIdSelect);
+		return Conditions.in(backReference, ownerIdSelect);
 	}
 }
