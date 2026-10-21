@@ -22,6 +22,7 @@ import org.jspecify.annotations.Nullable;
 import org.springframework.data.expression.ValueExpression;
 import org.springframework.data.expression.ValueExpressionParser;
 import org.springframework.data.mapping.Association;
+import org.springframework.data.mapping.MappingException;
 import org.springframework.data.mapping.PersistentEntity;
 import org.springframework.data.mapping.model.AnnotationBasedPersistentProperty;
 import org.springframework.data.mapping.model.Property;
@@ -46,6 +47,7 @@ import org.springframework.util.StringUtils;
  * @author Sergey Korotaev
  * @author Mark Paluch
  * @author Sanghun Lee
+ * @author Sharang Gupta
  */
 public class BasicRelationalPersistentProperty extends AnnotationBasedPersistentProperty<RelationalPersistentProperty>
 		implements RelationalPersistentProperty {
@@ -60,6 +62,7 @@ public class BasicRelationalPersistentProperty extends AnnotationBasedPersistent
 	private final @Nullable ValueExpression collectionIdColumnNameExpression;
 	private final Lazy<SqlIdentifier> collectionKeyColumnName;
 	private final @Nullable ValueExpression collectionKeyColumnNameExpression;
+	private final Lazy<Optional<RelationalPersistentProperty>> referencedProperty;
 	private final boolean isEmbedded;
 	private final String embeddedPrefix;
 
@@ -109,10 +112,13 @@ public class BasicRelationalPersistentProperty extends AnnotationBasedPersistent
 							: createDerivedSqlIdentifier(namingStrategy.getKeyColumn(this)));
 
 			this.collectionKeyColumnNameExpression = detectExpression(mappedCollection.keyColumn());
+			this.referencedProperty = Lazy
+					.of(() -> Optional.ofNullable(resolveReferencedProperty(mappedCollection.referencedProperty())));
 		} else {
 
 			this.collectionIdColumnNameExpression = null;
 			this.collectionKeyColumnNameExpression = null;
+			this.referencedProperty = Lazy.of(Optional.empty());
 		}
 
 		if (isAnnotationPresent(Column.class)) {
@@ -238,6 +244,11 @@ public class BasicRelationalPersistentProperty extends AnnotationBasedPersistent
 	}
 
 	@Override
+	public @Nullable RelationalPersistentProperty getReferencedProperty() {
+		return referencedProperty.get().orElse(null);
+	}
+
+	@Override
 	public boolean isQualified() {
 		return isMap() || isListLike();
 	}
@@ -287,6 +298,38 @@ public class BasicRelationalPersistentProperty extends AnnotationBasedPersistent
 	@Override
 	public @Nullable SqlIdentifier getSequence() {
 		return this.sequence;
+	}
+
+	private @Nullable RelationalPersistentProperty resolveReferencedProperty(String propertyName) {
+
+		if (!StringUtils.hasText(propertyName)) {
+			return null;
+		}
+
+		RelationalPersistentEntity<?> owner = getOwner();
+		String description = "Property '%s' of %s references property '%s'".formatted(getName(), owner.getType().getName(),
+				propertyName);
+
+		if (!isEntity()) {
+			throw new MappingException(
+					"%s but referenced properties are only supported for properties referencing entities".formatted(description));
+		}
+
+		if (!owner.hasIdProperty()) {
+			throw new MappingException("%s but %s has no identifier property".formatted(description, owner.getType().getName()));
+		}
+
+		RelationalPersistentProperty referenced = owner.getPersistentProperty(propertyName);
+
+		if (referenced == null) {
+			throw new MappingException("%s which is unknown".formatted(description));
+		}
+
+		if (referenced.isEntity() || referenced.isCollectionLike() || referenced.isMap() || referenced.isAssociation()) {
+			throw new MappingException("%s which is not a simple property".formatted(description));
+		}
+
+		return referenced.isIdProperty() ? null : referenced;
 	}
 
 	private boolean isListLike() {

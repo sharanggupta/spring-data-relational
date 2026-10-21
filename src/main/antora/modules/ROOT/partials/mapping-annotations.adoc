@@ -10,7 +10,7 @@ It may be combined with `@Embedded` to form a composite id.
 * `@InsertOnlyProperty`: Marks a property as only to be written during insert.
 Such a property on an aggregate root will only be written once and never updated.
 Note that on a nested entity, all save operations result in an insert therefore this annotation has no effect on properties of nested entities.
-* `@MappedCollection`: Allows for configuration how a collection, or a single nested entity gets mapped. `idColumn` specifies the column used for referencing the parent entities primary key. `keyColumn` specifies the column used to store the index of a `List` or the key of a `Map`.
+* `@MappedCollection`: Allows for configuration how a collection, or a single nested entity gets mapped. `idColumn` specifies the column used for referencing the parent entities primary key. `keyColumn` specifies the column used to store the index of a `List` or the key of a `Map`. `referencedProperty` names a property of the parent entity to be stored in the back reference instead of its id.
 * `@Sequence`: specify a database sequence for generating values for the annotated property.
 * `@Table`: Applied at the class level to indicate this class is a candidate for mapping to the database.
 You can specify the name of the table where the database is stored.

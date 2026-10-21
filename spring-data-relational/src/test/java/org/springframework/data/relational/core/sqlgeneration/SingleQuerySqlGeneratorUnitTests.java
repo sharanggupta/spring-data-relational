@@ -26,6 +26,7 @@ import org.springframework.data.mapping.PersistentPropertyPath;
 import org.springframework.data.relational.core.dialect.Dialect;
 import org.springframework.data.relational.core.dialect.PostgresDialect;
 import org.springframework.data.relational.core.mapping.AggregatePath;
+import org.springframework.data.relational.core.mapping.MappedCollection;
 import org.springframework.data.relational.core.mapping.RelationalMappingContext;
 import org.springframework.data.relational.core.mapping.RelationalPersistentEntity;
 import org.springframework.data.relational.core.mapping.RelationalPersistentProperty;
@@ -184,6 +185,36 @@ class SingleQuerySqlGeneratorUnitTests {
 
 	}
 
+	@Nested
+	class AggregateWithReferenceToNonIdProperty extends AbstractTestFixture {
+
+		private AggregateWithReferenceToNonIdProperty() {
+			super(ReferencedPropertyAggregate.class);
+		}
+
+		@Test // GH-1952
+		void joinsReferencedEntitiesOnReferencedProperty() {
+
+			Table table = Table.create(persistentEntity.getQualifiedTableName());
+			String sql = sqlGenerator.findAll(persistentEntity, table.column("id").isEqualTo(Conditions.just(":id")));
+
+			String backref = backRefAlias("trivials");
+
+			SqlAssert baseSelect = assertThatParsed(sql).hasInlineView();
+
+			baseSelect.hasInlineViewSelectingFrom("\"trivial_aggregate\"") //
+					.hasExactlyColumns( //
+							rn(col("\"parent_reference\"")).minus(1).as(rnAlias("trivials")), //
+							count(col("\"parent_reference\"")).as(rcAlias("trivials")), //
+							col("\"id\"").as(alias("trivials.id")), //
+							col("\"name\"").as(alias("trivials.name")), //
+							col("\"parent_reference\"").as(backref), //
+							col("\"parent_reference_key\"").as(keyAlias("trivials")) //
+					);
+			baseSelect.hasJoin().on(alias("reference"), backref);
+		}
+	}
+
 	private AggregatePath path(Class<?> type) {
 		return context.getAggregatePath(context.getRequiredPersistentEntity(type));
 	}
@@ -203,6 +234,11 @@ class SingleQuerySqlGeneratorUnitTests {
 	}
 
 	record SingleReferenceAggregate(@Id Long id, String name, List<TrivialAggregate> trivials) {
+	}
+
+	record ReferencedPropertyAggregate(@Id Long id, String reference,
+			@MappedCollection(idColumn = "parent_reference", keyColumn = "parent_reference_key",
+					referencedProperty = "reference") List<TrivialAggregate> trivials) {
 	}
 
 	private class AbstractTestFixture {

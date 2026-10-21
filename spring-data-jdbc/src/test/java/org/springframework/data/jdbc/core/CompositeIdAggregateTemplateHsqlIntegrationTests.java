@@ -33,6 +33,7 @@ import org.springframework.data.jdbc.testing.EnabledOnDatabase;
 import org.springframework.data.jdbc.testing.IntegrationTest;
 import org.springframework.data.jdbc.testing.TestConfiguration;
 import org.springframework.data.relational.core.mapping.Embedded;
+import org.springframework.data.relational.core.mapping.MappedCollection;
 import org.springframework.data.relational.core.query.Criteria;
 import org.springframework.data.relational.core.query.Query;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcOperations;
@@ -42,6 +43,7 @@ import org.springframework.jdbc.core.namedparam.NamedParameterJdbcOperations;
  *
  * @author Jens Schauder
  * @author Jaeyeon Kim
+ * @author Sharang Gupta
  */
 @IntegrationTest
 @EnabledOnDatabase(DatabaseType.HSQL)
@@ -268,6 +270,28 @@ class CompositeIdAggregateTemplateHsqlIntegrationTests {
 		assertThat(reloaded).isEqualTo(entity);
 	}
 
+	@Test // GH-1952
+	void saveUpdateAndDeleteWithCompositeIdAndReferencedProperty() {
+
+		WithCompositeIdAndReference entity = template.insert(new WithCompositeIdAndReference(new EmbeddedPk(23L, "x"),
+				"REF-1", List.of(new Child("Alf"), new Child("Bob"))));
+		WithCompositeIdAndReference other = template.insert(
+				new WithCompositeIdAndReference(new EmbeddedPk(24L, "y"), "REF-2", List.of(new Child("Flo"))));
+
+		assertThat(template.findById(entity.embeddedPk(), WithCompositeIdAndReference.class)).isEqualTo(entity);
+
+		WithCompositeIdAndReference changed = template.save(
+				new WithCompositeIdAndReference(entity.embeddedPk(), "REF-1", List.of(new Child("Cid"))));
+
+		assertThat(template.findById(entity.embeddedPk(), WithCompositeIdAndReference.class)).isEqualTo(changed);
+
+		template.delete(changed);
+
+		assertThat(template.findAll(WithCompositeIdAndReference.class)).containsExactly(other);
+		assertThat(namedParameterJdbcTemplate.queryForList("SELECT COMPOSITE_REFERENCE FROM CHILD", Map.of(),
+				String.class)).containsExactly("REF-2");
+	}
+
 	@Test // GH-574
 	void sortByCompositeIdParts() {
 
@@ -354,6 +378,13 @@ class CompositeIdAggregateTemplateHsqlIntegrationTests {
 			@Id @Embedded(onEmpty = Embedded.OnEmpty.USE_NULL) EmbeddedPk embeddedPk, //
 			String name, //
 			List<Child> child) {
+	}
+
+	private record WithCompositeIdAndReference( //
+			@Id @Embedded(onEmpty = Embedded.OnEmpty.USE_NULL) EmbeddedPk embeddedPk, //
+			String reference, //
+			@MappedCollection(idColumn = "COMPOSITE_REFERENCE", keyColumn = "COMPOSITE_REFERENCE_KEY",
+					referencedProperty = "reference") List<Child> children) {
 	}
 
 	@Configuration

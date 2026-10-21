@@ -190,6 +190,31 @@ class BasicRelationalPersistentPropertyUnitTests {
 				.isEqualTo(SqlIdentifier.from(SqlIdentifier.quoted("public"), SqlIdentifier.quoted("my_seq")));
 	}
 
+	@Test // GH-1952
+	void referencedPropertyIsAbsentByDefault() {
+
+		RelationalPersistentEntity<?> entity = context.getRequiredPersistentEntity(WithReferencedProperty.class);
+
+		assertThat(entity.getRequiredPersistentProperty("byId").getReferencedProperty()).isNull();
+	}
+
+	@Test // GH-1952
+	void detectsReferencedProperty() {
+
+		RelationalPersistentEntity<?> entity = context.getRequiredPersistentEntity(WithReferencedProperty.class);
+
+		assertThat(entity.getRequiredPersistentProperty("byReference").getReferencedProperty())
+				.isEqualTo(entity.getRequiredPersistentProperty("reference"));
+	}
+
+	@Test // GH-1952
+	void referencedIdentifierIsTreatedAsDefault() {
+
+		RelationalPersistentEntity<?> entity = context.getRequiredPersistentEntity(WithReferencedProperty.class);
+
+		assertThat(entity.getRequiredPersistentProperty("byExplicitId").getReferencedProperty()).isNull();
+	}
+
 	@SuppressWarnings("unused")
 	static class DummyEntity {
 
@@ -465,6 +490,22 @@ class BasicRelationalPersistentPropertyUnitTests {
 	private static class WithMappedCollection {
 
 		@MappedCollection(idColumn = "#{'id_col'}", keyColumn = "#{'key_col'}") private List<Integer> someList;
+	}
+
+	@SuppressWarnings("unused")
+	static class WithReferencedProperty {
+
+		@Id Long id;
+		String reference;
+		List<ReferencedChild> byId;
+		@MappedCollection(idColumn = "PARENT_REFERENCE",
+				referencedProperty = "reference") List<ReferencedChild> byReference;
+		@MappedCollection(referencedProperty = "id") List<ReferencedChild> byExplicitId;
+	}
+
+	@SuppressWarnings("unused")
+	static class ReferencedChild {
+		String name;
 	}
 
 	@SuppressWarnings("unused")

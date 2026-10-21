@@ -19,6 +19,7 @@ import java.sql.Array;
 import java.sql.JDBCType;
 import java.sql.SQLException;
 import java.sql.SQLType;
+import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -64,6 +65,7 @@ import org.springframework.util.Assert;
  * @author Christoph Strobl
  * @author Myeonghyeon Lee
  * @author Chirag Tailor
+ * @author Sharang Gupta
  * @see MappingContext
  * @see SimpleTypeHolder
  * @see CustomConversions
@@ -472,11 +474,7 @@ public class MappingJdbcConverter extends MappingRelationalConverter implements 
 
 				if (property.isCollectionLike() || property.isMap()) {
 
-					Identifier identifier = JdbcIdentifierBuilder.forBackReference(MappingJdbcConverter.this, aggregatePath,
-							this.identifier, getWrappedValueProvider(delegate::getValue, aggregatePath));
-
-					Iterable<Object> allByPath = relationResolver.findAllByPath(identifier,
-							aggregatePath.getRequiredPersistentPropertyPath());
+					Iterable<Object> allByPath = findAllByPath(aggregatePath);
 
 					if (property.isCollectionLike()) {
 						return (T) allByPath;
@@ -498,6 +496,21 @@ public class MappingJdbcConverter extends MappingRelationalConverter implements 
 			}
 
 			return (T) delegate.getValue(aggregatePath);
+		}
+
+		private Iterable<Object> findAllByPath(AggregatePath aggregatePath) {
+
+			Function<AggregatePath, Object> valueProvider = getWrappedValueProvider(delegate::getValue, aggregatePath);
+
+			if (isReferencedValueAbsent(aggregatePath, valueProvider)) {
+				// entities never get stored with a back reference to an absent value
+				return Collections.emptyList();
+			}
+
+			Identifier identifier = JdbcIdentifierBuilder.forBackReference(MappingJdbcConverter.this, aggregatePath,
+					this.identifier, valueProvider);
+
+			return relationResolver.findAllByPath(identifier, aggregatePath.getRequiredPersistentPropertyPath());
 		}
 
 		@Override
@@ -574,9 +587,28 @@ public class MappingJdbcConverter extends MappingRelationalConverter implements 
 		}
 
 		RelationalPersistentProperty idProperty = idDefiningParentPath.getRequiredIdProperty();
-		AggregatePath idPath = idProperty.isEntity() ? idDefiningParentPath.append(idProperty) : idDefiningParentPath;
+		boolean referencesId = aggregatePath.getRequiredLeafProperty().getReferencedProperty() == null;
+		AggregatePath basePath = referencesId && idProperty.isEntity() ? idDefiningParentPath.append(idProperty)
+				: idDefiningParentPath;
 
-		return ap -> valueProvider.apply(smartAppend(idPath, ap));
+		return ap -> valueProvider.apply(smartAppend(basePath, ap));
+	}
+
+	/**
+	 * Checks whether the back reference of the given {@link AggregatePath} refers to a
+	 * {@link RelationalPersistentProperty#getReferencedProperty() referenced property} without a value.
+	 */
+	private static boolean isReferencedValueAbsent(AggregatePath aggregatePath,
+			Function<AggregatePath, Object> valueProvider) {
+
+		if (aggregatePath.getRequiredLeafProperty().getReferencedProperty() == null) {
+			return false;
+		}
+
+		AggregatePath referencedPath = aggregatePath.getTableInfo().backReferenceColumnInfos()
+				.any((referenced, columnInfo) -> referenced);
+
+		return valueProvider.apply(referencedPath) == null;
 	}
 
 	private static AggregatePath smartAppend(AggregatePath base, AggregatePath suffix) {

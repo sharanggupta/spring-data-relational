@@ -22,6 +22,7 @@ import org.jspecify.annotations.Nullable;
 import org.springframework.data.core.TypeInformation;
 import org.springframework.data.expression.ValueExpression;
 import org.springframework.data.expression.ValueExpressionParser;
+import org.springframework.data.mapping.MappingException;
 import org.springframework.data.mapping.model.BasicPersistentEntity;
 import org.springframework.data.relational.core.sql.SqlIdentifier;
 import org.springframework.data.util.Lazy;
@@ -40,6 +41,7 @@ import org.springframework.util.StringUtils;
  * @author Kurt Niemi
  * @author Sergey Korotaev
  * @author Mark Paluch
+ * @author Sharang Gupta
  */
 class BasicRelationalPersistentEntity<T> extends BasicPersistentEntity<T, RelationalPersistentProperty>
 		implements RelationalPersistentEntity<T> {
@@ -159,6 +161,17 @@ class BasicRelationalPersistentEntity<T> extends BasicPersistentEntity<T, Relati
 	@Deprecated(forRemoval = true)
 	public SqlIdentifier getIdColumn() {
 		return getRequiredIdProperty().getColumnName();
+	}
+
+	@Override
+	public void verify() throws MappingException {
+
+		super.verify();
+
+		// resolving referenced properties eagerly rejects invalid MappedCollection.referencedProperty() values early
+		for (RelationalPersistentProperty property : this) {
+			property.getReferencedProperty();
+		}
 	}
 
 	@Override

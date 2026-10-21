@@ -57,6 +57,7 @@ import org.springframework.util.Assert;
  *
  * @author Yunyoung LEE
  * @author Nikita Konev
+ * @author Sharang Gupta
  * @since 3.5
  */
 class JdbcDeleteQueryCreator extends RelationalQueryCreator<List<ParametrizedQuery>> {
@@ -149,7 +150,7 @@ class JdbcDeleteQueryCreator extends RelationalQueryCreator<List<ParametrizedQue
 			List<Column> reverseColumns = aggregatePath.getTableInfo().backReferenceColumnInfos().toColumnList(table);
 			Expression expression = Expressions.of(reverseColumns);
 
-			Condition inCondition = Conditions.in(expression, parentSelect);
+			Condition inCondition = Conditions.in(expression, selectReferencedValues(aggregatePath, parentSelect));
 
 			List<Column> parentIdColumns = aggregatePath.getIdDefiningParentPath().getTableInfo().idColumnInfos()
 					.toColumnList(table);
@@ -163,5 +164,29 @@ class JdbcDeleteQueryCreator extends RelationalQueryCreator<List<ParametrizedQue
 
 			deleteConsumer.accept(StatementBuilder.delete(table).where(inCondition).build());
 		}
+	}
+
+	/**
+	 * Returns a {@link Select} for the values referenced by the back reference of the given {@link AggregatePath}. These
+	 * are the identifiers selected by {@literal parentIdSelect}, unless the back reference refers to a
+	 * {@link RelationalPersistentProperty#getReferencedProperty() referenced property}.
+	 */
+	private static Select selectReferencedValues(AggregatePath path, Select parentIdSelect) {
+
+		RelationalPersistentProperty referencedProperty = path.getRequiredLeafProperty().getReferencedProperty();
+
+		if (referencedProperty == null) {
+			return parentIdSelect;
+		}
+
+		AggregatePath parentPath = path.getIdDefiningParentPath();
+		AggregatePath.TableInfo parentTableInfo = parentPath.getTableInfo();
+		Table parentTable = Table.create(parentTableInfo.qualifiedTableName());
+		List<Column> parentIdColumns = parentTableInfo.idColumnInfos().toColumnList(parentTable);
+
+		return StatementBuilder.select(parentTable.column(parentPath.append(referencedProperty).getColumnInfo().name())) //
+				.from(parentTable) //
+				.where(Conditions.in(Expressions.of(parentIdColumns), parentIdSelect)) //
+				.build();
 	}
 }

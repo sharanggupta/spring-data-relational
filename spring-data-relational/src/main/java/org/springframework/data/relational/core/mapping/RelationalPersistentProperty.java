@@ -57,6 +57,19 @@ public interface RelationalPersistentProperty extends PersistentProperty<Relatio
 	SqlIdentifier getKeyColumn();
 
 	/**
+	 * Returns the property of the {@link #getOwner() owning entity} whose value gets stored in the back reference of the
+	 * entities referenced by this property, if it is not the identifier of the owning entity.
+	 *
+	 * @return the referenced property or {@literal null} if the back reference refers to the identifier of the owning
+	 *         entity.
+	 * @since 4.2
+	 * @see MappedCollection#referencedProperty()
+	 */
+	default @Nullable RelationalPersistentProperty getReferencedProperty() {
+		return null;
+	}
+
+	/**
 	 * Returns if this property is a qualified property, i.e. a property referencing multiple elements that can get picked
 	 * by a key or an index.
 	 */

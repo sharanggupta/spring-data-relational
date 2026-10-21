@@ -88,6 +88,7 @@ import org.springframework.test.context.ContextConfiguration;
  * @author Vincent Galloy
  * @author Sergey Korotaev
  * @author Sanghun Lee
+ * @author Sharang Gupta
  */
 @IntegrationTest
 abstract class AbstractJdbcAggregateTemplateIntegrationTests {
@@ -1647,6 +1648,213 @@ abstract class AbstractJdbcAggregateTemplateIntegrationTests {
 		assertThat(eventListener.getEvents()).hasSize(legoSetsLoaded.size()).hasOnlyElementsOfType(AfterConvertEvent.class);
 	}
 
+	@Test // GH-1952
+	void loadsCollectionsBackReferencingNonIdProperty() {
+
+		ReferenceOrder order = template.insert(createReferenceOrder("ORD-1", "one"));
+		ReferenceOrder other = template.insert(createReferenceOrder("ORD-2", "two"));
+
+		assertSoftly(softly -> {
+
+			softly.assertThat(template.findById(order.id(), ReferenceOrder.class)).isEqualTo(order);
+			softly.assertThat(template.findById(other.id(), ReferenceOrder.class)).isEqualTo(other);
+			softly.assertThat(template.findAll(ReferenceOrder.class)).containsExactlyInAnyOrder(order, other);
+			softly.assertThat(template.findAllById(List.of(order.id()), ReferenceOrder.class)).containsExactly(order);
+		});
+	}
+
+	@Test // GH-1952
+	void storesValueOfReferencedPropertyAsBackReference() {
+
+		template.insert(createReferenceOrder("ORD-1", "one"));
+
+		assertSoftly(softly -> {
+
+			softly.assertThat(
+					jdbcTemplate.queryForList("SELECT REFERENCE_ORDER FROM REFERENCE_ORDER_ITEM", emptyMap(), String.class))
+					.containsOnly("ORD-1").hasSize(2);
+			softly.assertThat(
+					jdbcTemplate.queryForList("SELECT REFERENCE_ORDER FROM REFERENCE_ORDER_LINE", emptyMap(), String.class))
+					.containsOnly("ORD-1").hasSize(2);
+			softly.assertThat(
+					jdbcTemplate.queryForList("SELECT REFERENCE_ORDER FROM REFERENCE_ORDER_NOTE", emptyMap(), String.class))
+					.containsOnly("ORD-1").hasSize(1);
+		});
+	}
+
+	@Test // GH-1952
+	void loadsEntitiesReferencingTheReferencedProperty() {
+
+		ReferenceOrder order = template.insert(new ReferenceOrder(null, "ORD-1", Set.of(), List.of(), Map.of()));
+
+		jdbcTemplate.update("INSERT INTO REFERENCE_ORDER_ITEM (REFERENCE_ORDER, NAME) VALUES ('ORD-1', 'inserted')",
+				emptyMap());
+
+		assertThat(template.findById(order.id(), ReferenceOrder.class).items())
+				.containsExactly(new ReferenceOrderItem("inserted"));
+	}
+
+	@Test // GH-1952
+	void loadsNoEntitiesWhenReferencedPropertyIsNull() {
+
+		ReferenceOrder order = template.insert(new ReferenceOrder(null, null, Set.of(), List.of(), Map.of()));
+
+		ReferenceOrder reloaded = template.findById(order.id(), ReferenceOrder.class);
+
+		// Single Query Loading leaves collections without elements null
+		assertSoftly(softly -> {
+
+			softly.assertThat(reloaded.reference()).isNull();
+			softly.assertThat(reloaded.items()).isNullOrEmpty();
+			softly.assertThat(reloaded.lines()).isNullOrEmpty();
+			softly.assertThat(reloaded.notes()).isNullOrEmpty();
+		});
+	}
+
+	@Test // GH-1952
+	void updateReplacesEntitiesBackReferencingNonIdProperty() {
+
+		ReferenceOrder order = template.insert(createReferenceOrder("ORD-1", "one"));
+		ReferenceOrder other = template.insert(createReferenceOrder("ORD-2", "two"));
+
+		ReferenceOrder changed = template.save(new ReferenceOrder(order.id(), "ORD-1", //
+				Set.of(new ReferenceOrderItem("changed")), //
+				List.of(new ReferenceOrderLine("changed-0")), //
+				Map.of("changed", new ReferenceOrderNote("changed"))));
+
+		assertSoftly(softly -> {
+
+			softly.assertThat(template.findById(order.id(), ReferenceOrder.class)).isEqualTo(changed);
+			softly.assertThat(template.findById(other.id(), ReferenceOrder.class)).isEqualTo(other);
+			softly.assertThat(count("REFERENCE_ORDER_ITEM")).isEqualTo(3);
+			softly.assertThat(count("REFERENCE_ORDER_LINE")).isEqualTo(3);
+			softly.assertThat(count("REFERENCE_ORDER_NOTE")).isEqualTo(2);
+		});
+	}
+
+	@Test // GH-1952
+	void deleteRemovesEntitiesBackReferencingNonIdProperty() {
+
+		ReferenceOrder order = template.insert(createReferenceOrder("ORD-1", "one"));
+		ReferenceOrder other = template.insert(createReferenceOrder("ORD-2", "two"));
+
+		template.delete(order);
+
+		assertSoftly(softly -> {
+
+			softly.assertThat(template.findAll(ReferenceOrder.class)).containsExactly(other);
+			softly.assertThat(count("REFERENCE_ORDER_ITEM")).isEqualTo(2);
+			softly.assertThat(count("REFERENCE_ORDER_LINE")).isEqualTo(2);
+			softly.assertThat(count("REFERENCE_ORDER_NOTE")).isEqualTo(1);
+		});
+	}
+
+	@Test // GH-1952
+	void deleteAllByIdRemovesEntitiesBackReferencingNonIdProperty() {
+
+		ReferenceOrder order = template.insert(createReferenceOrder("ORD-1", "one"));
+		ReferenceOrder other = template.insert(createReferenceOrder("ORD-2", "two"));
+
+		template.deleteAllById(List.of(order.id()), ReferenceOrder.class);
+
+		assertSoftly(softly -> {
+
+			softly.assertThat(template.findAll(ReferenceOrder.class)).containsExactly(other);
+			softly.assertThat(count("REFERENCE_ORDER_ITEM")).isEqualTo(2);
+			softly.assertThat(count("REFERENCE_ORDER_LINE")).isEqualTo(2);
+			softly.assertThat(count("REFERENCE_ORDER_NOTE")).isEqualTo(1);
+		});
+	}
+
+	@Test // GH-1952
+	void deleteAllRemovesEntitiesBackReferencingNonIdProperty() {
+
+		template.insert(createReferenceOrder("ORD-1", "one"));
+		template.insert(createReferenceOrder("ORD-2", "two"));
+
+		template.deleteAll(ReferenceOrder.class);
+
+		assertSoftly(softly -> {
+
+			softly.assertThat(count("REFERENCE_ORDER")).isZero();
+			softly.assertThat(count("REFERENCE_ORDER_ITEM")).isZero();
+			softly.assertThat(count("REFERENCE_ORDER_LINE")).isZero();
+			softly.assertThat(count("REFERENCE_ORDER_NOTE")).isZero();
+		});
+	}
+
+	@Test // GH-1952
+	void loadsNestedEntitiesBackReferencingNonIdProperties() {
+
+		ReferenceCustomer customer = template.insert(createReferenceCustomer("C-1", 1L, 2L));
+		ReferenceCustomer other = template.insert(createReferenceCustomer("C-2", 3L, 4L));
+
+		assertSoftly(softly -> {
+
+			softly.assertThat(template.findById(customer.id(), ReferenceCustomer.class)).isEqualTo(customer);
+			softly.assertThat(template.findById(other.id(), ReferenceCustomer.class)).isEqualTo(other);
+			softly.assertThat(template.findAll(ReferenceCustomer.class)).containsExactlyInAnyOrder(customer, other);
+		});
+	}
+
+	@Test // GH-1952
+	void updateReplacesNestedEntitiesBackReferencingNonIdProperties() {
+
+		ReferenceCustomer customer = template.insert(createReferenceCustomer("C-1", 1L, 2L));
+		ReferenceCustomer other = template.insert(createReferenceCustomer("C-2", 3L, 4L));
+
+		ReferenceCustomer changed = template.save(new ReferenceCustomer(customer.id(), "C-1",
+				new ReferenceCustomerProfile("changed"), Set.of(new ReferenceCustomerAccount(1L, "IBAN-1",
+						Set.of(new ReferenceAccountEntry("changed-1"), new ReferenceAccountEntry("changed-2"))))));
+
+		assertSoftly(softly -> {
+
+			softly.assertThat(template.findById(customer.id(), ReferenceCustomer.class)).isEqualTo(changed);
+			softly.assertThat(template.findById(other.id(), ReferenceCustomer.class)).isEqualTo(other);
+			softly.assertThat(count("REFERENCE_CUSTOMER_PROFILE")).isEqualTo(2);
+			softly.assertThat(count("REFERENCE_CUSTOMER_ACCOUNT")).isEqualTo(3);
+			softly.assertThat(count("REFERENCE_ACCOUNT_ENTRY")).isEqualTo(6);
+		});
+	}
+
+	@Test // GH-1952
+	void deleteRemovesNestedEntitiesBackReferencingNonIdProperties() {
+
+		ReferenceCustomer customer = template.insert(createReferenceCustomer("C-1", 1L, 2L));
+		ReferenceCustomer other = template.insert(createReferenceCustomer("C-2", 3L, 4L));
+
+		template.delete(customer);
+
+		assertSoftly(softly -> {
+
+			softly.assertThat(template.findAll(ReferenceCustomer.class)).containsExactly(other);
+			softly.assertThat(count("REFERENCE_CUSTOMER_PROFILE")).isEqualTo(1);
+			softly.assertThat(count("REFERENCE_CUSTOMER_ACCOUNT")).isEqualTo(2);
+			softly.assertThat(count("REFERENCE_ACCOUNT_ENTRY")).isEqualTo(4);
+		});
+	}
+
+	private static ReferenceOrder createReferenceOrder(String reference, String suffix) {
+
+		return new ReferenceOrder(null, reference, //
+				Set.of(new ReferenceOrderItem("item-1-" + suffix), new ReferenceOrderItem("item-2-" + suffix)), //
+				List.of(new ReferenceOrderLine("line-0-" + suffix), new ReferenceOrderLine("line-1-" + suffix)), //
+				Map.of("note-" + suffix, new ReferenceOrderNote("content-" + suffix)));
+	}
+
+	private static ReferenceCustomer createReferenceCustomer(String customerNumber, long firstAccountId,
+			long secondAccountId) {
+
+		return new ReferenceCustomer(null, customerNumber, new ReferenceCustomerProfile("profile-" + customerNumber),
+				Set.of(createReferenceAccount(firstAccountId), createReferenceAccount(secondAccountId)));
+	}
+
+	private static ReferenceCustomerAccount createReferenceAccount(long id) {
+
+		return new ReferenceCustomerAccount(id, "IBAN-" + id,
+				Set.of(new ReferenceAccountEntry("entry-1-" + id), new ReferenceAccountEntry("entry-2-" + id)));
+	}
+
 	private <T extends Number> void saveAndUpdateAggregateWithVersion(VersionedAggregate aggregate,
 			Function<Number, T> toConcreteNumber) {
 		saveAndUpdateAggregateWithVersion(aggregate, toConcreteNumber, 0);
@@ -2535,6 +2743,38 @@ abstract class AbstractJdbcAggregateTemplateIntegrationTests {
 	}
 
 	record Third(String name) {
+	}
+
+	record ReferenceOrder(@Id Long id, String reference,
+			@MappedCollection(referencedProperty = "reference") Set<ReferenceOrderItem> items,
+			@MappedCollection(referencedProperty = "reference") List<ReferenceOrderLine> lines,
+			@MappedCollection(referencedProperty = "reference") Map<String, ReferenceOrderNote> notes) {
+	}
+
+	record ReferenceOrderItem(String name) {
+	}
+
+	record ReferenceOrderLine(String name) {
+	}
+
+	record ReferenceOrderNote(String content) {
+	}
+
+	record ReferenceCustomer(@Id Long id, String customerNumber,
+			@MappedCollection(idColumn = "CUSTOMER_NUMBER",
+					referencedProperty = "customerNumber") ReferenceCustomerProfile profile,
+			@MappedCollection(idColumn = "CUSTOMER_NUMBER",
+					referencedProperty = "customerNumber") Set<ReferenceCustomerAccount> accounts) {
+	}
+
+	record ReferenceCustomerProfile(String nickname) {
+	}
+
+	record ReferenceCustomerAccount(@Id Long id, String iban,
+			@MappedCollection(idColumn = "ACCOUNT_IBAN", referencedProperty = "iban") Set<ReferenceAccountEntry> entries) {
+	}
+
+	record ReferenceAccountEntry(String description) {
 	}
 
 	@Configuration

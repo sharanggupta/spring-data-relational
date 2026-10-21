@@ -37,6 +37,7 @@ import org.springframework.data.mapping.PersistentPropertyPaths;
 import org.springframework.data.relational.core.conversion.DbAction;
 import org.springframework.data.relational.core.conversion.IdValueSource;
 import org.springframework.data.relational.core.mapping.AggregatePath;
+import org.springframework.data.relational.core.mapping.MappedCollection;
 import org.springframework.data.relational.core.mapping.RelationalMappingContext;
 import org.springframework.data.relational.core.mapping.RelationalPersistentProperty;
 import org.springframework.data.relational.core.sql.SqlIdentifier;
@@ -264,6 +265,37 @@ public class JdbcAggregateChangeExecutorContextUnitTests {
 		assertThat(content2.id).isEqualTo(12L);
 	}
 
+	@Test // GH-1952
+	void insertOfChildUsesReferencedPropertyAsBackReference() {
+
+		root.reference = "reference-1";
+		Content content = new Content();
+
+		when(accessStrategy.insert(root, DummyEntity.class, Identifier.empty(), IdValueSource.GENERATED)).thenReturn(23L);
+
+		DbAction.InsertRoot<DummyEntity> rootInsert = new DbAction.InsertRoot<>(root, IdValueSource.GENERATED);
+		executionContext.executeInsertRoot(rootInsert);
+		executionContext.executeInsert(createInsert(rootInsert, "byReference", content, null, IdValueSource.GENERATED));
+
+		verify(accessStrategy).insert(content, Content.class,
+				Identifier.of(SqlIdentifier.quoted("DUMMY_REFERENCE"), "reference-1", String.class), IdValueSource.GENERATED);
+	}
+
+	@Test // GH-1952
+	void insertOfChildFailsWhenReferencedPropertyIsNull() {
+
+		Content content = new Content();
+
+		when(accessStrategy.insert(root, DummyEntity.class, Identifier.empty(), IdValueSource.GENERATED)).thenReturn(23L);
+
+		DbAction.InsertRoot<DummyEntity> rootInsert = new DbAction.InsertRoot<>(root, IdValueSource.GENERATED);
+		executionContext.executeInsertRoot(rootInsert);
+		DbAction.Insert<?> insert = createInsert(rootInsert, "byReference", content, null, IdValueSource.GENERATED);
+
+		assertThatIllegalStateException().isThrownBy(() -> executionContext.executeInsert(insert))
+				.withMessageContaining("reference");
+	}
+
 	DbAction.Insert<?> createInsert(DbAction.WithEntity<?> parent, String propertyName, Object value,
 			@Nullable Object key, IdValueSource idValueSource) {
 
@@ -298,7 +330,11 @@ public class JdbcAggregateChangeExecutorContextUnitTests {
 
 		@Id Long id;
 
+		String reference;
+
 		Content content;
+
+		@MappedCollection(idColumn = "DUMMY_REFERENCE", referencedProperty = "reference") Content byReference;
 
 		ContentImmutableId contentImmutableId;
 

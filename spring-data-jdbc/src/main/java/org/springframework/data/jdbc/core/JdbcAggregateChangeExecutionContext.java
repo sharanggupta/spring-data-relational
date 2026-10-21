@@ -54,6 +54,7 @@ import org.springframework.util.Assert;
  * @author Christoph Strobl
  * @author Sanghun Lee
  * @author Jaeyeon Kim
+ * @author Sharang Gupta
  */
 @SuppressWarnings("rawtypes")
 class JdbcAggregateChangeExecutionContext {
@@ -198,11 +199,9 @@ class JdbcAggregateChangeExecutionContext {
 
 	private Identifier getParentKeys(DbAction.WithDependingOn<?> action, JdbcConverter converter) {
 
-		Object id = getParentId(action);
-
 		AggregatePath aggregatePath = context.getAggregatePath(action.propertyPath());
 		JdbcIdentifierBuilder identifier = JdbcIdentifierBuilder //
-				.forBackReferences(converter, aggregatePath, getIdMapper(id, aggregatePath, converter));
+				.forBackReferences(converter, aggregatePath, getBackReferenceValueProvider(action, aggregatePath));
 
 		for (Map.Entry<PersistentPropertyPath<RelationalPersistentProperty>, Object> qualifier : action.qualifiers()
 				.entrySet()) {
@@ -210,6 +209,33 @@ class JdbcAggregateChangeExecutionContext {
 		}
 
 		return identifier.build();
+	}
+
+	private Function<AggregatePath, Object> getBackReferenceValueProvider(DbAction.WithDependingOn<?> action,
+			AggregatePath aggregatePath) {
+
+		RelationalPersistentProperty referencedProperty = aggregatePath.getRequiredLeafProperty().getReferencedProperty();
+
+		if (referencedProperty == null) {
+			return getIdMapper(getParentId(action), aggregatePath, converter);
+		}
+
+		Object referencedValue = getReferencedValue(action, aggregatePath, referencedProperty);
+		return __ -> referencedValue;
+	}
+
+	private Object getReferencedValue(DbAction.WithDependingOn<?> action, AggregatePath aggregatePath,
+			RelationalPersistentProperty referencedProperty) {
+
+		DbAction.WithEntity<?> parentAction = getIdOwningAction(action, aggregatePath.getIdDefiningParentPath());
+		RelationalPersistentEntity<?> parentEntity = getRequiredPersistentEntity(parentAction.getEntityType());
+		Object referencedValue = parentEntity.getPropertyAccessor(parentAction.entity()).getProperty(referencedProperty);
+
+		Assert.state(referencedValue != null,
+				() -> "Couldn't obtain a value for property '%s' of %s referenced by %s".formatted(referencedProperty.getName(),
+						parentEntity.getType().getName(), aggregatePath.toDotPath()));
+
+		return referencedValue;
 	}
 
 	static Function<AggregatePath, Object> getIdMapper(Object idValue, AggregatePath path, JdbcConverter converter) {

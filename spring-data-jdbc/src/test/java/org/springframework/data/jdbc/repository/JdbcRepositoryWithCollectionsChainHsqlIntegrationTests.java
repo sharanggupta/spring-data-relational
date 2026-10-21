@@ -1,5 +1,6 @@
 package org.springframework.data.jdbc.repository;
 
+import static java.util.Collections.*;
 import static org.assertj.core.api.Assertions.*;
 
 import java.util.HashMap;
@@ -17,6 +18,7 @@ import org.springframework.data.jdbc.testing.DatabaseType;
 import org.springframework.data.jdbc.testing.EnabledOnDatabase;
 import org.springframework.data.jdbc.testing.IntegrationTest;
 import org.springframework.data.jdbc.testing.TestConfiguration;
+import org.springframework.data.relational.core.mapping.MappedCollection;
 import org.springframework.data.repository.CrudRepository;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 
@@ -25,6 +27,7 @@ import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
  *
  * @author Yunyoung LEE
  * @author Nikita Konev
+ * @author Sharang Gupta
  */
 @IntegrationTest
 @EnabledOnDatabase(DatabaseType.HSQL)
@@ -32,6 +35,7 @@ class JdbcRepositoryWithCollectionsChainHsqlIntegrationTests {
 
 	@Autowired NamedParameterJdbcTemplate template;
 	@Autowired DummyEntityRepository repository;
+	@Autowired ReferencingEntityRepository referencingRepository;
 
 	private static DummyEntity createDummyEntity() {
 
@@ -60,6 +64,36 @@ class JdbcRepositoryWithCollectionsChainHsqlIntegrationTests {
 		assertThat(count).isEqualTo(0);
 	}
 
+	@Test // GH-1952
+	void deleteByNameWithReferencedProperties() {
+
+		ReferencingEntity kept = referencingRepository.save(createReferencingEntity("kept", "REF-KEPT", "one", "two"));
+		ReferencingEntity deleted = referencingRepository.save(createReferencingEntity("deleted", "REF-DELETED", "three"));
+
+		assertThat(referencingRepository.deleteByName("deleted")).isEqualTo(1);
+
+		assertThat(referencingRepository.findById(deleted.id)).isEmpty();
+		assertThat(referencingRepository.findById(kept.id)).isPresent();
+		assertThat(template.queryForList("SELECT REFERENCING_ENTITY FROM REFERENCING_CHILD", emptyMap(), String.class))
+				.containsOnly("REF-KEPT").hasSize(2);
+	}
+
+	private static ReferencingEntity createReferencingEntity(String name, String reference, String... childNames) {
+
+		ReferencingEntity entity = new ReferencingEntity();
+		entity.name = name;
+		entity.reference = reference;
+
+		for (String childName : childNames) {
+
+			ReferencingChild child = new ReferencingChild();
+			child.name = childName;
+			entity.children.add(child);
+		}
+
+		return entity;
+	}
+
 	private ChildElement createChildElement(String name) {
 
 		ChildElement element = new ChildElement();
@@ -80,6 +114,10 @@ class JdbcRepositoryWithCollectionsChainHsqlIntegrationTests {
 		long deleteByName(String name);
 	}
 
+	interface ReferencingEntityRepository extends CrudRepository<ReferencingEntity, Long> {
+		long deleteByName(String name);
+	}
+
 	@Configuration
 	@Import(TestConfiguration.class)
 	static class Config {
@@ -94,6 +132,11 @@ class JdbcRepositoryWithCollectionsChainHsqlIntegrationTests {
 		@Bean
 		DummyEntityRepository dummyEntityRepository() {
 			return factory.getRepository(DummyEntityRepository.class);
+		}
+
+		@Bean
+		ReferencingEntityRepository referencingEntityRepository() {
+			return factory.getRepository(ReferencingEntityRepository.class);
 		}
 	}
 
@@ -118,4 +161,17 @@ class JdbcRepositoryWithCollectionsChainHsqlIntegrationTests {
 		@Id private Long id;
 	}
 
+	static class ReferencingEntity {
+
+		@Id Long id;
+		String name;
+		String reference;
+		@MappedCollection(referencedProperty = "reference") Set<ReferencingChild> children = new HashSet<>();
+	}
+
+	static class ReferencingChild {
+
+		@Id Long id;
+		String name;
+	}
 }

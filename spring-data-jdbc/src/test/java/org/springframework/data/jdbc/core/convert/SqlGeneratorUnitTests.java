@@ -293,6 +293,101 @@ class SqlGeneratorUnitTests {
 						+ "(SELECT dummy_entity.id1 AS id1 FROM dummy_entity WHERE dummy_entity.id1 = :id1))");
 	}
 
+	@Test // GH-1952
+	void cascadingDeleteFirstLevelByReferencedProperty() {
+
+		String sql = createSqlGenerator(ReferencingEntity.class)
+				.createDeleteByPath(getPath("children", ReferencingEntity.class));
+
+		assertThat(sql).isEqualTo("DELETE FROM referenced_by_property " //
+				+ "WHERE referenced_by_property.parent_reference IN " //
+				+ "(SELECT referencing_entity.x_reference FROM referencing_entity WHERE referencing_entity.id1 = :id1)");
+	}
+
+	@Test // GH-1952
+	void cascadingDeleteInByPathFirstLevelByReferencedProperty() {
+
+		String sql = createSqlGenerator(ReferencingEntity.class)
+				.createDeleteInByPath(getPath("children", ReferencingEntity.class));
+
+		assertThat(sql).isEqualTo("DELETE FROM referenced_by_property " //
+				+ "WHERE referenced_by_property.parent_reference IN " //
+				+ "(SELECT referencing_entity.x_reference FROM referencing_entity WHERE referencing_entity.id1 IN (:ids))");
+	}
+
+	@Test // GH-1952
+	void cascadingDeleteAllFirstLevelByReferencedProperty() {
+
+		String sql = createSqlGenerator(ReferencingEntity.class)
+				.createDeleteAllSql(getPath("children", ReferencingEntity.class));
+
+		assertThat(sql).isEqualTo("DELETE FROM referenced_by_property " //
+				+ "WHERE referenced_by_property.parent_reference IN " //
+				+ "(SELECT referencing_entity.x_reference FROM referencing_entity WHERE referencing_entity.id1 IS NOT NULL)");
+	}
+
+	@Test // GH-1952
+	void cascadingDeleteInSubselectByPathFirstLevelByReferencedProperty() {
+
+		Query query = Query.query(Criteria.where("id").is(23L));
+		MapSqlParameterSource parameterSource = new MapSqlParameterSource();
+
+		String sql = createSqlGenerator(ReferencingEntity.class).createDeleteInSubselectByPath(query, parameterSource,
+				getPath("children", ReferencingEntity.class));
+
+		assertThat(sql).isEqualTo("DELETE FROM referenced_by_property " //
+				+ "WHERE referenced_by_property.parent_reference IN " //
+				+ "(SELECT referencing_entity.x_reference FROM referencing_entity WHERE referencing_entity.id1 IN " //
+				+ "(SELECT referencing_entity.id1 AS id1 FROM referencing_entity WHERE referencing_entity.id1 = :id1))");
+	}
+
+	@Test // GH-1952
+	void cascadingDeleteSecondLevelBelowReferencedProperty() {
+
+		String sql = createSqlGenerator(ReferencingEntity.class)
+				.createDeleteByPath(getPath("children.further", ReferencingEntity.class));
+
+		assertThat(sql).isEqualTo("DELETE FROM second_level_referenced_entity " //
+				+ "WHERE second_level_referenced_entity.referenced_by_property IN " //
+				+ "(SELECT referenced_by_property.x_child_id FROM referenced_by_property " //
+				+ "WHERE referenced_by_property.parent_reference IN " //
+				+ "(SELECT referencing_entity.x_reference FROM referencing_entity WHERE referencing_entity.id1 = :id1))");
+	}
+
+	@Test // GH-1952
+	void cascadingDeleteSecondLevelByReferencedProperty() {
+
+		String sql = createSqlGenerator(ReferencingEntity.class)
+				.createDeleteByPath(getPath("children.elements", ReferencingEntity.class));
+
+		assertThat(sql).isEqualTo("DELETE FROM element " //
+				+ "WHERE element.child_code IN " //
+				+ "(SELECT referenced_by_property.x_code FROM referenced_by_property " //
+				+ "WHERE referenced_by_property.parent_reference IN " //
+				+ "(SELECT referencing_entity.x_reference FROM referencing_entity WHERE referencing_entity.id1 = :id1))");
+	}
+
+	@Test // GH-1952
+	void cascadingDeleteSecondLevelByReferencedPropertyBelowIdentifier() {
+
+		String sql = createSqlGenerator(ParentOfReferencing.class)
+				.createDeleteByPath(getPath("child.elements", ParentOfReferencing.class));
+
+		assertThat(sql).isEqualTo("DELETE FROM element " //
+				+ "WHERE element.child_code IN " //
+				+ "(SELECT referenced_by_property.x_code FROM referenced_by_property " //
+				+ "WHERE referenced_by_property.parent_of_referencing = :id1)");
+	}
+
+	@Test // GH-1952
+	void joinsOneToOneOnReferencedProperty() {
+
+		String sql = createSqlGenerator(ReferencingEntity.class).getFindOne();
+
+		assertThat(sql).contains("LEFT OUTER JOIN referenced_by_property single " //
+				+ "ON single.parent_reference = referencing_entity.x_reference");
+	}
+
 	@Test // DATAJDBC-101
 	void findAllSortedByUnsorted() {
 
@@ -1210,6 +1305,34 @@ class SqlGeneratorUnitTests {
 		@Id Long l1id;
 		String content;
 		SecondLevelReferencedEntity further;
+	}
+
+	@SuppressWarnings("unused")
+	static class ReferencingEntity {
+
+		@Column("id1")
+		@Id Long id;
+		String reference;
+		@MappedCollection(idColumn = "parent_reference",
+				referencedProperty = "reference") Set<ReferencedByProperty> children;
+		@MappedCollection(idColumn = "parent_reference", referencedProperty = "reference") ReferencedByProperty single;
+	}
+
+	@SuppressWarnings("unused")
+	static class ParentOfReferencing {
+
+		@Column("id1")
+		@Id Long id;
+		ReferencedByProperty child;
+	}
+
+	@SuppressWarnings("unused")
+	static class ReferencedByProperty {
+
+		@Id Long childId;
+		String code;
+		SecondLevelReferencedEntity further;
+		@MappedCollection(idColumn = "child_code", referencedProperty = "code") Set<Element> elements;
 	}
 
 	@SuppressWarnings("unused")

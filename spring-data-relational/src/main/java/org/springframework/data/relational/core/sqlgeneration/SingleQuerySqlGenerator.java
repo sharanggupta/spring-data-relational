@@ -79,7 +79,7 @@ public class SingleQuerySqlGenerator implements SqlGenerator {
 				: new AliasedExpression(rownumbers.get(0), "rn");
 		columns.add(totalRownumber);
 
-		InlineQuery inlineQuery = createMainSelect(columns, rootPath, rootQuery, inlineQueries);
+		InlineQuery inlineQuery = createMainSelect(columns, rootQuery, inlineQueries);
 		Expression rootId = just(aliases.getColumnAlias(rootPath.append(aggregate.getRequiredIdProperty())));
 
 		List<Expression> selectList = getSelectList(queryMeta, inlineQueries, rootId);
@@ -112,11 +112,11 @@ public class SingleQuerySqlGenerator implements SqlGenerator {
 		return expressions;
 	}
 
-	private InlineQuery createMainSelect(List<Expression> columns, AggregatePath rootPath, InlineQuery rootQuery,
+	private InlineQuery createMainSelect(List<Expression> columns, InlineQuery rootQuery,
 			List<QueryMeta> inlineQueries) {
 
 		SelectBuilder.SelectJoin select = StatementBuilder.select(columns).from(rootQuery);
-		select = applyJoins(rootPath, inlineQueries, select);
+		select = applyJoins(inlineQueries, select);
 
 		SelectBuilder.BuildSelect buildSelect = applyWhereCondition(inlineQueries, select);
 		return InlineQuery.create(buildSelect.build(false), "main");
@@ -249,24 +249,23 @@ public class SingleQuerySqlGenerator implements SqlGenerator {
 	}
 
 	/**
-	 * Adds joins to a select.
+	 * Adds joins to a select. Each inline query gets joined on its back reference to the property of the aggregate root
+	 * it references, which is the identifier unless a different property is referenced.
 	 *
-	 * @param rootPath the AggregatePath that gets selected by the select in question.
 	 * @param inlineQueries all the inline queries to added as joins as returned by
 	 *          {@link #createInlineQueries(PersistentPropertyPaths)}
 	 * @param select the select to modify.
 	 * @return the original select but with added joins
 	 */
-	private SelectBuilder.SelectJoin applyJoins(AggregatePath rootPath, List<QueryMeta> inlineQueries,
-			SelectBuilder.SelectJoin select) {
+	private SelectBuilder.SelectJoin applyJoins(List<QueryMeta> inlineQueries, SelectBuilder.SelectJoin select) {
 
-		RelationalPersistentProperty rootIdProperty = rootPath.getRequiredIdProperty();
-		AggregatePath rootIdPath = rootPath.append(rootIdProperty);
 		for (QueryMeta queryMeta : inlineQueries) {
 
 			AggregatePath path = queryMeta.basePath();
+			AggregatePath referencedPath = path.getTableInfo().backReferenceColumnInfos()
+					.any((referenced, columnInfo) -> referenced);
 			String backReferenceAlias = aliases.getBackReferenceAlias(path);
-			Comparison joinCondition = Conditions.isEqual(Expressions.just(aliases.getColumnAlias(rootIdPath)),
+			Comparison joinCondition = Conditions.isEqual(Expressions.just(aliases.getColumnAlias(referencedPath)),
 					Expressions.just(backReferenceAlias));
 			select = select.leftOuterJoin(queryMeta.inlineQuery).on(joinCondition);
 		}

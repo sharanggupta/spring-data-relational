@@ -59,4 +59,17 @@ public @interface MappedCollection {
 	 */
 	String keyColumn() default "";
 
+	/**
+	 * The name of the property of the entity declaring the annotated property whose value gets stored in the
+	 * {@link #idColumn() id column} of the referenced entities. Defaults to the identifier property of the declaring
+	 * entity if the value is empty.
+	 * <p>
+	 * The referenced property must be a simple property of the declaring entity, its value must be unique and must not
+	 * change once the aggregate got persisted. The declaring entity must have an identifier property.
+	 *
+	 * @since 4.2
+	 * @see RelationalPersistentProperty#getReferencedProperty()
+	 */
+	String referencedProperty() default "";
+
 }

@@ -159,6 +159,78 @@ class DefaultAggregatePathUnitTests {
 		});
 	}
 
+	@Test // GH-1952
+	void backReferenceToReferencedProperty() {
+
+		AggregatePath.ColumnInfos backReference = path(WithReferencedProperty.class, "children").getTableInfo()
+				.backReferenceColumnInfos();
+
+		assertSoftly(softly -> {
+
+			softly.assertThat(backReference.paths()).containsExactly(path(WithReferencedProperty.class, "reference"));
+			softly.assertThat(backReference.unique().name()).isEqualTo(quoted("PARENT_REFERENCE"));
+		});
+	}
+
+	@Test // GH-1952
+	void backReferenceToReferencedPropertyUsesDefaultColumnName() {
+
+		AggregatePath.ColumnInfos backReference = path(WithReferencedProperty.class, "single").getTableInfo()
+				.backReferenceColumnInfos();
+
+		assertSoftly(softly -> {
+
+			softly.assertThat(backReference.paths()).containsExactly(path(WithReferencedProperty.class, "reference"));
+			softly.assertThat(backReference.unique().name()).isEqualTo(quoted("WITH_REFERENCED_PROPERTY"));
+		});
+	}
+
+	@Test // GH-1952
+	void backReferenceToReferencedPropertyOfNestedEntity() {
+
+		AggregatePath.ColumnInfos backReference = path(WithReferencedProperty.class, "nested.children").getTableInfo()
+				.backReferenceColumnInfos();
+
+		assertSoftly(softly -> {
+
+			softly.assertThat(backReference.paths())
+					.containsExactly(path(WithReferencedProperty.class, "nested.code"));
+			softly.assertThat(backReference.unique().name()).isEqualTo(quoted("NESTED_CODE"));
+		});
+	}
+
+	@Test // GH-1952
+	void backReferenceToReferencedPropertyOfEntityWithCompositeId() {
+
+		AggregatePath.ColumnInfos backReference = path(CompoundIdEntityWithReferencedProperty.class, "third")
+				.getTableInfo().backReferenceColumnInfos();
+
+		assertSoftly(softly -> {
+
+			softly.assertThat(backReference.paths())
+					.containsExactly(path(CompoundIdEntityWithReferencedProperty.class, "reference"));
+			softly.assertThat(backReference.unique().name()).isEqualTo(quoted("COMPOUND_REFERENCE"));
+		});
+	}
+
+	@Test // GH-1952
+	void rejectsReferencedPropertyForEntitiesWithoutIdReferencingFurtherEntities() {
+
+		AggregatePath path = path(WithReferencedProperty.class, "noIdChildrenWithReferences");
+
+		assertThatIllegalStateException().isThrownBy(path::getTableInfo).withMessageContaining("identifier");
+	}
+
+	@Test // GH-1952
+	void backReferenceBelowReferencedPropertyUsesIdentifier() {
+
+		AggregatePath.ColumnInfos backReference = path(WithReferencedProperty.class, "nested.children.third")
+				.getTableInfo().backReferenceColumnInfos();
+
+		assertThat(backReference.paths())
+				.containsExactly(path(WithReferencedProperty.class, "nested.children.secondId"));
+	}
+
 	@Test // GH-1525
 	void getQualifierColumn() {
 
@@ -560,6 +632,36 @@ class DefaultAggregatePathUnitTests {
 	}
 
 	record CompoundIdEntity(@Id CompoundId id, Second second) {
+	}
+
+	record CompoundIdEntityWithReferencedProperty(@Id CompoundId id, String reference,
+			@MappedCollection(idColumn = "COMPOUND_REFERENCE", referencedProperty = "reference") Third third) {
+	}
+
+	@SuppressWarnings("unused")
+	static class WithReferencedProperty {
+
+		@Id Long id;
+		String reference;
+		@MappedCollection(idColumn = "PARENT_REFERENCE", referencedProperty = "reference") Set<Third> children;
+		@MappedCollection(referencedProperty = "reference") Third single;
+		@MappedCollection(referencedProperty = "reference") List<Second> noIdChildrenWithReferences;
+		NestedWithReferencedProperty nested;
+	}
+
+	@SuppressWarnings("unused")
+	static class NestedWithReferencedProperty {
+
+		@Id Long nestedId;
+		String code;
+		@MappedCollection(idColumn = "NESTED_CODE", referencedProperty = "code") List<SecondWithId> children;
+	}
+
+	@SuppressWarnings("unused")
+	static class SecondWithId {
+
+		@Id Long secondId;
+		Third third;
 	}
 
 	@SuppressWarnings("unused")

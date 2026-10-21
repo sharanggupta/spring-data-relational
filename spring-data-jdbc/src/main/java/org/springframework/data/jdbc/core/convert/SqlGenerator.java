@@ -64,6 +64,7 @@ import org.springframework.util.Assert;
  * @author Christoph Strobl
  * @author Jaeyeon Kim
  * @author Seungmin Baek
+ * @author Sharang Gupta
  */
 public class SqlGenerator {
 
@@ -990,11 +991,8 @@ public class SqlGenerator {
 
 		Condition joinCondition = backRefColumnInfos.reduce(Conditions.unrestricted(), (aggregatePath, columnInfo) -> {
 
-			AggregatePath.ColumnInfo idColumnInfo = idColumnInfos.get(aggregatePath);
-
-			Assert.notNull(idColumnInfo, "IdColumnInfo must not be null");
-
-			return currentTable.column(columnInfo.name()).isEqualTo(parentTable.column(idColumnInfo.name()));
+			SqlIdentifier referencedColumnName = getReferencedColumnName(aggregatePath, idColumnInfos);
+			return currentTable.column(columnInfo.name()).isEqualTo(parentTable.column(referencedColumnName));
 		}, Condition::and);
 
 		return new Join(currentTable, joinCondition);
@@ -1053,7 +1051,7 @@ public class SqlGenerator {
 			if (isDeeplyNested(parentPath)) {
 				return getSubselectCondition(parentPath, conditionFunction, columns);
 			}
-			return conditionFunction.apply(columns);
+			return getRootCondition(conditionFunction, columns);
 		}
 
 		AggregatePath.TableInfo parentPathTableInfo = parentPath.getTableInfo();
@@ -1065,20 +1063,99 @@ public class SqlGenerator {
 
 		if (isFirstNonRoot(parentPath)) { // if the parent is the root of the path
 			// apply the rootCondition
-			innerCondition = conditionFunction.apply(selectFilterColumns);
+			innerCondition = getRootCondition(conditionFunction, selectFilterColumns);
 		} else {
 			// otherwise, we need another layer of subselect
 			innerCondition = getSubselectCondition(parentPath, conditionFunction, selectFilterColumns);
 		}
 
-		List<Column> idColumns = parentPathTableInfo.idColumnInfos().toColumnList(subSelectTable);
+		List<Column> referencedColumns = getReferencedColumns(columns, parentPathTableInfo.idColumnInfos(),
+				subSelectTable);
 
 		Select select = Select.builder() //
-				.select(idColumns) //
+				.select(referencedColumns) //
 				.from(subSelectTable) //
 				.where(innerCondition).build();
 
 		return Conditions.in(toExpression(columns), select);
+	}
+
+	/**
+	 * Construct a condition for back reference columns referencing the aggregate root. If they reference the identifier
+	 * of the aggregate root the {@literal rootCondition} gets applied directly. Otherwise, they reference another property
+	 * of the aggregate root and the {@literal rootCondition} gets applied to a {@link Select Sub-Select} selecting the
+	 * values of that property.
+	 *
+	 * @param rootCondition a function to construct {@link Condition}s based on the identifier columns of the aggregate
+	 *          root.
+	 * @param backReferenceColumns the back reference columns, keyed by the {@link AggregatePath} of the referenced
+	 *          property of the aggregate root.
+	 * @return the condition.
+	 */
+	private Condition getRootCondition(Function<Map<AggregatePath, Column>, Condition> rootCondition,
+			Map<AggregatePath, Column> backReferenceColumns) {
+
+		AggregatePath.TableInfo rootTableInfo = mappingContext.getAggregatePath(entity).getTableInfo();
+		AggregatePath.ColumnInfos rootIdColumnInfos = rootTableInfo.idColumnInfos();
+
+		if (referencesIdentifier(backReferenceColumns, rootIdColumnInfos)) {
+			return rootCondition.apply(backReferenceColumns);
+		}
+
+		Table rootTable = Table.create(rootTableInfo.qualifiedTableName());
+
+		Select select = Select.builder() //
+				.select(getReferencedColumns(backReferenceColumns, rootIdColumnInfos, rootTable)) //
+				.from(rootTable) //
+				.where(rootCondition.apply(rootIdColumnInfos.toMap(rootTable))) //
+				.build();
+
+		return Conditions.in(toExpression(backReferenceColumns), select);
+	}
+
+	/**
+	 * Checks whether the given back reference columns reference the identifier of the parent, as opposed to a
+	 * {@link RelationalPersistentProperty#getReferencedProperty() referenced property}.
+	 */
+	private static boolean referencesIdentifier(Map<AggregatePath, Column> backReferenceColumns,
+			AggregatePath.ColumnInfos parentIdColumnInfos) {
+
+		return backReferenceColumns.keySet().stream()
+				.allMatch(referencedPath -> referencedPath.isRoot() || parentIdColumnInfos.get(referencedPath) != null);
+	}
+
+	/**
+	 * Returns the columns of the parent table referenced by the given back reference columns.
+	 *
+	 * @param backReferenceColumns the back reference columns, keyed by the {@link AggregatePath} of the referenced
+	 *          property.
+	 * @param parentIdColumnInfos the identifier columns of the parent.
+	 * @param parentTable the table of the parent.
+	 * @return the referenced columns in the same order as the {@literal backReferenceColumns}.
+	 */
+	private static List<Column> getReferencedColumns(Map<AggregatePath, Column> backReferenceColumns,
+			AggregatePath.ColumnInfos parentIdColumnInfos, Table parentTable) {
+
+		List<Column> referencedColumns = new ArrayList<>(backReferenceColumns.size());
+		for (AggregatePath referencedPath : backReferenceColumns.keySet()) {
+			referencedColumns.add(parentTable.column(getReferencedColumnName(referencedPath, parentIdColumnInfos)));
+		}
+		return referencedColumns;
+	}
+
+	/**
+	 * Returns the name of the column referenced by a back reference. This is an identifier column of the parent, unless
+	 * the back reference refers to a {@link RelationalPersistentProperty#getReferencedProperty() referenced property}.
+	 *
+	 * @param referencedPath the {@link AggregatePath} of the referenced property.
+	 * @param parentIdColumnInfos the identifier columns of the parent.
+	 * @return the name of the referenced column.
+	 */
+	private static SqlIdentifier getReferencedColumnName(AggregatePath referencedPath,
+			AggregatePath.ColumnInfos parentIdColumnInfos) {
+
+		AggregatePath.ColumnInfo idColumnInfo = parentIdColumnInfos.get(referencedPath);
+		return idColumnInfo != null ? idColumnInfo.name() : referencedPath.getColumnInfo().name();
 	}
 
 	private Expression toExpression(Map<AggregatePath, Column> columnsMap) {
@@ -1233,7 +1310,7 @@ public class SqlGenerator {
 		if (isFirstNonRoot(path)) {
 
 			delete = builder //
-					.where(multiIdCondition.apply(columns)) //
+					.where(getRootCondition(multiIdCondition, columns)) //
 					.build();
 		} else {
 

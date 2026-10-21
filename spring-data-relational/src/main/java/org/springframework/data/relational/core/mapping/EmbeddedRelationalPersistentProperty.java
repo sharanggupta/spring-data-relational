@@ -81,6 +81,11 @@ class EmbeddedRelationalPersistentProperty implements RelationalPersistentProper
 	}
 
 	@Override
+	public @Nullable RelationalPersistentProperty getReferencedProperty() {
+		return delegate.getReferencedProperty();
+	}
+
+	@Override
 	public boolean isQualified() {
 		return delegate.isQualified();
 	}

@@ -19,11 +19,13 @@ import static org.assertj.core.api.Assertions.*;
 
 import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.data.annotation.Id;
+import org.springframework.data.mapping.MappingException;
 import org.springframework.data.mapping.PersistentPropertyPath;
 import org.springframework.data.mapping.model.SimpleTypeHolder;
 import org.springframework.data.relational.core.sql.SqlIdentifier;
@@ -120,6 +122,63 @@ public class RelationalMappingContextUnitTests {
 		assertThat((Object) aggregatePath1).isNotEqualTo(aggregatePath2);
 	}
 
+	@Test // GH-1952
+	void acceptsReferencedSimpleProperty() {
+
+		RelationalPersistentEntity<?> entity = context.getRequiredPersistentEntity(WithReferencedProperty.class);
+
+		assertThat(entity.getRequiredPersistentProperty("children").getReferencedProperty())
+				.isEqualTo(entity.getRequiredPersistentProperty("reference"));
+	}
+
+	@Test // GH-1952
+	void rejectsUnknownReferencedProperty() {
+
+		assertThatExceptionOfType(MappingException.class)
+				.isThrownBy(() -> context.getRequiredPersistentEntity(WithUnknownReferencedProperty.class)) //
+				.havingRootCause().withMessageContaining("unknown");
+	}
+
+	@Test // GH-1952
+	void rejectsReferencedPropertyOfEntityWithoutId() {
+
+		assertThatExceptionOfType(MappingException.class)
+				.isThrownBy(() -> context.getRequiredPersistentEntity(WithReferencedPropertyButNoId.class)) //
+				.havingRootCause().withMessageContaining("identifier");
+	}
+
+	@Test // GH-1952
+	void rejectsReferencedPropertyWithinEmbeddable() {
+
+		assertThatExceptionOfType(MappingException.class)
+				.isThrownBy(() -> context.getRequiredPersistentEntity(WithEmbeddedReferencingProperty.class)) //
+				.havingRootCause().withMessageContaining("identifier");
+	}
+
+	@Test // GH-1952
+	void rejectsReferencedEntityProperty() {
+
+		assertThatExceptionOfType(MappingException.class)
+				.isThrownBy(() -> context.getRequiredPersistentEntity(WithReferencedEntityProperty.class)) //
+				.havingRootCause().withMessageContaining("simple");
+	}
+
+	@Test // GH-1952
+	void rejectsReferencedCollectionProperty() {
+
+		assertThatExceptionOfType(MappingException.class)
+				.isThrownBy(() -> context.getRequiredPersistentEntity(WithReferencedCollectionProperty.class)) //
+				.havingRootCause().withMessageContaining("simple");
+	}
+
+	@Test // GH-1952
+	void rejectsReferencedPropertyForSimpleValues() {
+
+		assertThatExceptionOfType(MappingException.class)
+				.isThrownBy(() -> context.getRequiredPersistentEntity(WithReferencedPropertyForSimpleValues.class)) //
+				.havingRootCause().withMessageContaining("entities");
+	}
+
 	static class EntityWithUuid {
 		@Id UUID uuid;
 	}
@@ -152,4 +211,50 @@ public class RelationalMappingContextUnitTests {
 	static class Inherit1 extends Base {}
 
 	static class Inherit2 extends Base {}
+
+	static class WithReferencedProperty {
+
+		@Id Long id;
+		String reference;
+		@MappedCollection(referencedProperty = "reference") Set<Child> children;
+	}
+
+	static class WithUnknownReferencedProperty {
+
+		@Id Long id;
+		@MappedCollection(referencedProperty = "unknown") Set<Child> children;
+	}
+
+	static class WithReferencedPropertyButNoId {
+
+		String reference;
+		@MappedCollection(referencedProperty = "reference") Set<Child> children;
+	}
+
+	static class WithEmbeddedReferencingProperty {
+
+		@Id Long id;
+		@Embedded.Nullable WithReferencedPropertyButNoId embedded;
+	}
+
+	static class WithReferencedEntityProperty {
+
+		@Id Long id;
+		Child child;
+		@MappedCollection(referencedProperty = "child") Set<Child> children;
+	}
+
+	static class WithReferencedCollectionProperty {
+
+		@Id Long id;
+		List<String> references;
+		@MappedCollection(referencedProperty = "references") Set<Child> children;
+	}
+
+	static class WithReferencedPropertyForSimpleValues {
+
+		@Id Long id;
+		String reference;
+		@MappedCollection(referencedProperty = "reference") List<String> values;
+	}
 }

@@ -401,6 +401,12 @@ public interface AggregatePath extends Iterable<AggregatePath>, Comparable<Aggre
 			}
 
 			AggregatePath idDefiningParentPath = tableOwner.getIdDefiningParentPath();
+			RelationalPersistentProperty referencedProperty = tableOwner.getRequiredLeafProperty().getReferencedProperty();
+
+			if (referencedProperty != null) {
+				return computeBackReferenceColumnInfos(path, tableOwner, referencedProperty);
+			}
+
 			RelationalPersistentProperty idProperty = idDefiningParentPath.getRequiredLeafEntity().getIdProperty();
 
 			AggregatePath basePath = idProperty != null && idProperty.isEntity() ? idDefiningParentPath.append(idProperty)
@@ -432,6 +438,41 @@ public interface AggregatePath extends Iterable<AggregatePath>, Comparable<Aggre
 				}
 			}
 			return ciBuilder.build();
+		}
+
+		/**
+		 * Computes the back reference to a {@link RelationalPersistentProperty#getReferencedProperty() referenced
+		 * property}. It consists of a single column, keyed by the path to the referenced property of the parent entity.
+		 */
+		private static ColumnInfos computeBackReferenceColumnInfos(AggregatePath path, AggregatePath tableOwner,
+				RelationalPersistentProperty referencedProperty) {
+
+			AggregatePath parentPath = tableOwner.getParentPath();
+
+			Assert.state(!parentPath.isEmbedded() && parentPath.equals(tableOwner.getIdDefiningParentPath()),
+					() -> "%s references property '%s' but it is not owned by the entity defining the back reference"
+							.formatted(tableOwner, referencedProperty.getName()));
+			Assert.state(tableOwner.hasIdProperty() || !hasRelations(tableOwner.getRequiredLeafEntity()),
+					() -> "%s references property '%s' and therefore requires an identifier for entities referencing other entities"
+							.formatted(tableOwner, referencedProperty.getName()));
+
+			SqlIdentifier reverseColumnName = tableOwner.getRequiredLeafProperty()
+					.getReverseColumnName(parentPath.getRequiredLeafEntity());
+			SqlIdentifier alias = AggregatePathTableUtils.prefixWithTableAlias(path, reverseColumnName);
+
+			ColumInfosBuilder ciBuilder = new ColumInfosBuilder(parentPath);
+			ciBuilder.add(referencedProperty, reverseColumnName, alias);
+			return ciBuilder.build();
+		}
+
+		private static boolean hasRelations(RelationalPersistentEntity<?> entity) {
+
+			for (RelationalPersistentProperty property : entity) {
+				if (RelationalPredicates.isRelation(property)) {
+					return true;
+				}
+			}
+			return false;
 		}
 
 		@Override

@@ -122,6 +122,8 @@ It is based on the foreign key column with an additional `_KEY` suffix.
 
 If you want a completely different way of naming these back references you may implement `NamingStrategy.getReverseColumnName(RelationalPersistentEntity<?> owner)` in a way that fits your needs.
 
+A back reference holds the id of the referencing entity unless you configure it to hold the value of another property, see <<entity-persistence.referenced-property>>.
+
 .Declaring and setting an `AggregateReference`
 [source,java]
 ----
