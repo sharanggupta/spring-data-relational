@@ -57,6 +57,7 @@ import org.springframework.util.Assert;
  *
  * @author Yunyoung LEE
  * @author Nikita Konev
+ * @author Sharang Gupta
  * @since 3.5
  */
 class JdbcDeleteQueryCreator extends RelationalQueryCreator<List<ParametrizedQuery>> {
@@ -151,11 +152,8 @@ class JdbcDeleteQueryCreator extends RelationalQueryCreator<List<ParametrizedQue
 
 			Condition inCondition = Conditions.in(expression, parentSelect);
 
-			List<Column> parentIdColumns = aggregatePath.getIdDefiningParentPath().getTableInfo().idColumnInfos()
-					.toColumnList(table);
-
 			Select select = StatementBuilder.select( //
-					parentIdColumns //
+					referencedIdColumns(aggregatePath, table) //
 			).from(table) //
 					.where(inCondition) //
 					.build();
@@ -163,5 +161,17 @@ class JdbcDeleteQueryCreator extends RelationalQueryCreator<List<ParametrizedQue
 
 			deleteConsumer.accept(StatementBuilder.delete(table).where(inCondition).build());
 		}
+	}
+
+	/**
+	 * Returns the columns of {@literal table} holding the identifier that entities nested in the given {@literal path}
+	 * reference: the id columns of the entity, or its back reference columns if it has no id of its own.
+	 */
+	private static List<Column> referencedIdColumns(AggregatePath path, Table table) {
+
+		AggregatePath.TableInfo tableInfo = path.getTableInfo();
+
+		return path.hasIdProperty() ? tableInfo.idColumnInfos().toColumnList(table)
+				: tableInfo.backReferenceColumnInfos().toColumnList(table);
 	}
 }

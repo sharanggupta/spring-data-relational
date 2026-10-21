@@ -17,6 +17,7 @@ import org.springframework.data.jdbc.testing.DatabaseType;
 import org.springframework.data.jdbc.testing.EnabledOnDatabase;
 import org.springframework.data.jdbc.testing.IntegrationTest;
 import org.springframework.data.jdbc.testing.TestConfiguration;
+import org.springframework.data.relational.core.mapping.Column;
 import org.springframework.data.repository.CrudRepository;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 
@@ -109,7 +110,7 @@ class JdbcRepositoryWithCollectionsChainHsqlIntegrationTests {
 
 		String name;
 		Set<GrandChildElement> content = new HashSet<>();
-		@Id private Long id;
+		@Id @Column("CHILD_ID") private Long id;
 	}
 
 	static class GrandChildElement {
