@@ -2,7 +2,9 @@ package org.springframework.data.jdbc.repository;
 
 import static org.assertj.core.api.Assertions.*;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -17,6 +19,7 @@ import org.springframework.data.jdbc.testing.DatabaseType;
 import org.springframework.data.jdbc.testing.EnabledOnDatabase;
 import org.springframework.data.jdbc.testing.IntegrationTest;
 import org.springframework.data.jdbc.testing.TestConfiguration;
+import org.springframework.data.relational.core.mapping.Column;
 import org.springframework.data.repository.CrudRepository;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 
@@ -25,6 +28,7 @@ import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
  *
  * @author Yunyoung LEE
  * @author Nikita Konev
+ * @author Sharang Gupta
  */
 @IntegrationTest
 @EnabledOnDatabase(DatabaseType.HSQL)
@@ -32,11 +36,16 @@ class JdbcRepositoryWithCollectionsChainHsqlIntegrationTests {
 
 	@Autowired NamedParameterJdbcTemplate template;
 	@Autowired DummyEntityRepository repository;
+	@Autowired ListRootRepository listRootRepository;
 
 	private static DummyEntity createDummyEntity() {
+		return createDummyEntity("Entity Name");
+	}
+
+	private static DummyEntity createDummyEntity(String name) {
 
 		DummyEntity entity = new DummyEntity();
-		entity.name = "Entity Name";
+		entity.name = name;
 		return entity;
 	}
 
@@ -60,6 +69,50 @@ class JdbcRepositoryWithCollectionsChainHsqlIntegrationTests {
 		assertThat(count).isEqualTo(0);
 	}
 
+	@Test
+	void deleteByNameWithNestedListsWithoutIds() {
+
+		ListGrandChild grandChild = new ListGrandChild();
+		grandChild.name = "grand child";
+		ListChild child = new ListChild();
+		child.name = "child";
+		child.children.add(grandChild);
+		ListRoot root = new ListRoot();
+		root.name = "list root";
+		root.children.add(child);
+
+		root = listRootRepository.save(root);
+
+		assertThat(listRootRepository.deleteByName("list root")).isEqualTo(1);
+
+		assertThat(listRootRepository.findById(root.id)).isEmpty();
+
+		Long count = template.queryForObject("select count(1) from list_grand_child", new HashMap<>(), Long.class);
+		assertThat(count).isEqualTo(0);
+	}
+
+	@Test
+	void deleteByNameKeepsTheGrandChildrenOfOtherAggregates() {
+
+		DummyEntity other = createDummyEntity("Other Name");
+		other.content.add(createChildElement("three"));
+		other.content.add(createChildElement("four"));
+		other = repository.save(other);
+
+		DummyEntity entity = createDummyEntity();
+		entity.content.add(createChildElement("one"));
+		entity.content.add(createChildElement("two"));
+		entity = repository.save(entity);
+
+		// the id of the deleted aggregate root is also the id of a child of the other aggregate
+		assertThat(other.content).extracting(child -> child.id).contains(entity.id);
+
+		assertThat(repository.deleteByName("Entity Name")).isEqualTo(1);
+
+		DummyEntity reloaded = repository.findById(other.id).orElseThrow();
+		assertThat(reloaded.content).hasSize(2).allSatisfy(child -> assertThat(child.content).hasSize(2));
+	}
+
 	private ChildElement createChildElement(String name) {
 
 		ChildElement element = new ChildElement();
@@ -80,6 +133,10 @@ class JdbcRepositoryWithCollectionsChainHsqlIntegrationTests {
 		long deleteByName(String name);
 	}
 
+	interface ListRootRepository extends CrudRepository<ListRoot, Long> {
+		long deleteByName(String name);
+	}
+
 	@Configuration
 	@Import(TestConfiguration.class)
 	static class Config {
@@ -95,6 +152,11 @@ class JdbcRepositoryWithCollectionsChainHsqlIntegrationTests {
 		DummyEntityRepository dummyEntityRepository() {
 			return factory.getRepository(DummyEntityRepository.class);
 		}
+
+		@Bean
+		ListRootRepository listRootRepository() {
+			return factory.getRepository(ListRootRepository.class);
+		}
 	}
 
 	static class DummyEntity {
@@ -109,13 +171,31 @@ class JdbcRepositoryWithCollectionsChainHsqlIntegrationTests {
 
 		String name;
 		Set<GrandChildElement> content = new HashSet<>();
-		@Id private Long id;
+		@Id @Column("CHILD_ID") private Long id;
 	}
 
 	static class GrandChildElement {
 
 		String content;
 		@Id private Long id;
+	}
+
+	static class ListRoot {
+
+		String name;
+		List<ListChild> children = new ArrayList<>();
+		@Id private Long id;
+	}
+
+	static class ListChild {
+
+		String name;
+		List<ListGrandChild> children = new ArrayList<>();
+	}
+
+	static class ListGrandChild {
+
+		String name;
 	}
 
 }
